@@ -822,6 +822,13 @@ Use the following settings to configure the serial connection to the printer:
      checksumRequiringCommands:
      - M110
 
+     # Are we running on the Buccaneer Pirate 3D printer?
+     # Sadly the stock firmware in the controller issues a stock Marlin response
+     # So it's safer to use a flag to manually say if this is the environment used.
+     # Autoconfigs hello command, alwaysSendChecksum, port, and baudrate
+     isBuccaneer:
+     - True
+
      # Command to send in order to initiate a handshake with the printer.
      # Defaults to "M110 N0" which simply resets the line numbers in the firmware and which
      # should be acknowledged with a simple "ok".

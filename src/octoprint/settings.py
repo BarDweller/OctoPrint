@@ -114,6 +114,7 @@ default_settings = {
 		"additionalBaudrates": [],
 		"longRunningCommands": ["G4", "G28", "G29", "G30", "G32", "M400", "M226", "M600"],
 		"checksumRequiringCommands": ["M110"],
+		"isBuccaneer": False,
 		"helloCommand": "M110 N0",
 		"disconnectOnErrors": True,
 		"ignoreErrorsFromFirmware": False,

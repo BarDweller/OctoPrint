@@ -418,15 +418,22 @@ class MachineCom(object):
 
 		self._max_write_passes = settings().getInt(["serial", "maxWritePasses"])
 
-		self._hello_command = settings().get(["serial", "helloCommand"])
+
 		self._trigger_ok_for_m29 = settings().getBoolean(["serial", "triggerOkForM29"])
 		self._block_M0_M1 = settings().getBoolean(["serial", "blockM0M1"])
 
-		self._hello_command = settings().get(["serial", "helloCommand"])
+		self._is_buccaneer = settings().get(["serial", "isBuccaneer"])
+		if self._is_buccaneer:
+			self._hello_command = "N0 M110"
+			self._alwaysSendChecksum = True
+			self._port = "/dev/ttyS1"
+			self._baudrate = 38400
+		else
+			self._hello_command = settings().get(["serial", "helloCommand"])
+			self._alwaysSendChecksum = settings().getBoolean(["serial", "alwaysSendChecksum"])
+			self._neverSendChecksum = settings().getBoolean(["serial", "neverSendChecksum"])
+			self._sendChecksumWithUnknownCommands = settings().getBoolean(["serial", "sendChecksumWithUnknownCommands"])
 
-		self._alwaysSendChecksum = settings().getBoolean(["serial", "alwaysSendChecksum"])
-		self._neverSendChecksum = settings().getBoolean(["serial", "neverSendChecksum"])
-		self._sendChecksumWithUnknownCommands = settings().getBoolean(["serial", "sendChecksumWithUnknownCommands"])
 		self._unknownCommandsNeedAck = settings().getBoolean(["serial", "unknownCommandsNeedAck"])
 		self._sdAlwaysAvailable = settings().getBoolean(["serial", "sdAlwaysAvailable"])
 		self._sdRelativePath = settings().getBoolean(["serial", "sdRelativePath"])
@@ -1411,7 +1418,12 @@ class MachineCom(object):
 		if tags is None:
 			tags = set()
 
-		self.sendCommand("M110 N{}".format(number),
+		if self._alwaysSendChecksum:
+			self.sendCommand("N{} M110".format(number),
+		                 part_of_job=part_of_job,
+		                 tags=tags | {"trigger:comm.reset_line_numbers",})
+		else
+			self.sendCommand("M110 N{}".format(number),
 		                 part_of_job=part_of_job,
 		                 tags=tags | {"trigger:comm.reset_line_numbers",})
 
@@ -3163,15 +3175,85 @@ class MachineCom(object):
 			self._currentLine += 1
 			self._do_send_with_checksum(cmd, linenumber)
 
-	def _do_send_with_checksum(self, command, linenumber):
-		command_to_send = "N" + str(linenumber) + " " + command
+	def _calc_checksum(command_to_send):
 		checksum = 0
 		for c in bytearray(command_to_send):
 			checksum ^= c
-		command_to_send = command_to_send + "*" + str(checksum)
+		checksum = np.uint8([checksum])
+		return checksum
+
+	def _calc_buccaneer_checksum_get_high_product(a, b):
+		product = np.multiply(np.uint64(a),np.uint64(b))
+		#really a >> 32, but you can't use right_shift on uint64s
+		product = np.divide(product, 4294967296)
+		val = np.uint32(product)
+		return val
+
+	def _calc_buccaneer_checksum(command_to_send):
+		magic1 = np.uint32(0xD517BC79)
+		magic2 = np.uint32(0x97B425F)
+		magic3 = np.uint32(0xD8)
+		magic4 = np.uint32(0x59E60383)
+		rotated1 = np.uint32(0);
+		rotated2 = np.uint32(0);
+		trimmed = np.uint16(0);
+		csumbyte = np.uint8(0);
+		presum = np.uint32(0);
+
+		for c in bytearray(command_to_send):
+			temp = np.uint32( np.subtract( np.left_shift(presum,5) , presum) )
+			extended  = np.uint32(c)
+			temp = np.add(temp, extended)
+			presum = temp
+
+		rotated1 = np.right_shift( _calc_buccaneer_checksum_get_high_product( magic1, presum), 23)
+		rotated2 = np.right_shift( rotated1, 3)
+		mult1 = np.multiply( magic3 , _calc_buccaneer_checksum_get_high_product(magic2, rotated2))
+		trimmed = np.uint16(np.subtract( rotated1, mult1 ))
+		trimmed = np.add(trimmed, np.uint16(0x21))
+		cs1 = np.uint8(trimmed)
+
+		rotated1 = np.right_shift( _calc_buccaneer_checksum_get_high_product( magic4, presum), 14)
+		rotated2 = np.right_shift( rotated1, 3)
+		mult1 = np.multiply( magic3 , _calc_buccaneer_checksum_get_high_product(magic2, rotated2))
+		trimmed = np.uint16(np.subtract( rotated1, mult1 ))
+		trimmed = np.add(trimmed, np.uint16(0x21))
+		cs2 = np.uint8(trimmed)
+
+		shiftedpresum = np.right_shift(presum, 3);
+		rotated1 = _calc_buccaneer_checksum_get_high_product( magic2, shiftedpresum)
+		rotated2 = np.right_shift( rotated1, 3)
+		mult1 = np.multiply( magic3 , _calc_buccaneer_checksum_get_high_product(magic2, rotated2))
+		trimmed = np.uint16(np.subtract( rotated1, mult1 ))
+		trimmed = np.add(trimmed, np.uint16(0x21))
+		cs3 = np.uint8(trimmed)
+
+		mult1 = np.multiply( magic3 , _calc_buccaneer_checksum_get_high_product(magic2, shiftedpresum))
+		trimmed = np.uint16(np.subtract( presum, mult1 ))
+		trimmed = np.add(trimmed, np.uint16(0x21))
+		cs4 = np.uint8(trimmed)
+
+		checksum = np.uint8([cs1,cs2,cs3,cs4])
+
+		return checksum
+
+	def _do_send_with_checksum(self, command, linenumber):
+		command_to_send = "N" + str(linenumber) + " " + command
+
+		checksum = np.uint8([])
+		if self._is_buccaneer:
+			checksum = _calc_buccaneer_checksum(command_to_send)
+		else
+			checksum = _calc_checksum(command_to_send)
+
+		command_to_send = command_to_send + "*"
+		for c in checksum:
+			command_to_send = command_to_send + "*" + chr(c)
+
 		self._do_send_without_checksum(command_to_send)
 
 	def _do_send_without_checksum(self, cmd, log=True):
+
 		if self._serial is None:
 			return
 
@@ -3425,7 +3507,9 @@ class MachineCom(object):
 
 	def _gcode_M112_queuing(self, cmd, cmd_type=None, gcode=None, subcode=None, *args, **kwargs):
 		# emergency stop, jump the queue with the M112
-		self._do_send_without_checksum("M112")
+		if not self._alwaysSendChecksum:
+			self._do_send_without_checksum("M112")
+
 		self._do_increment_and_send_with_checksum("M112")
 
 		# No idea if the printer is still listening or if M112 won. Just in case
