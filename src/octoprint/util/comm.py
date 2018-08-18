@@ -1616,7 +1616,7 @@ class MachineCom(object):
 						if linelower.startswith("ok") or linelower.startswith("temp") or linelower.startswith("percent") or linelower.startswith("done"):
 							line = line.split('*')[0]
 							parts = line.split(':')
-							line = parts[0].lower() + ' ' parts[1]
+							line = parts[0].lower() + ' ' + parts[1]
 							self._log("Buccaneer processed response message into : {}".format(line))
 						#if it's not one of the above, just let it pass thru.. and hope we can figure this out later ;p
 						
