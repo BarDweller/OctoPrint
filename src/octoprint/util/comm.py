@@ -12,6 +12,7 @@ import re
 import threading
 import contextlib
 import copy
+import numpy as np
 
 try:
 	import queue
@@ -424,7 +425,7 @@ class MachineCom(object):
 
 		self._is_buccaneer = settings().get(["serial", "isBuccaneer"])
 		if self._is_buccaneer:
-			self._hello_command = "N0 M110"
+			self._hello_command = "N0 M110" #+chr(0xde)+chr(0xbb)+chr(0xc4)+chr(0x7a)
 			self._alwaysSendChecksum = True
 			self._neverSendChecksum = False
 			self._sendChecksumWithUnknownCommands = False
@@ -1608,6 +1609,17 @@ class MachineCom(object):
 				def convert_line(line):
 					if line is None:
 						return None, None
+
+					#convert buccaneer responses into gcode
+					if self._is_buccaneer:
+						linelower = line.lower();
+						if linelower.startswith("ok") or linelower.startswith("temp") or linelower.startswith("percent") or linelower.startswith("done"):
+							line = line.split('*')[0]
+							parts = line.split(':')
+							line = parts[0].lower() + parts[0]
+							self._log("Buccaneer processed response message into : {}".format(line))
+						#if it's not one of the above, just let it pass thru.. and hope we can figure this out later ;p
+						
 					stripped_line = line.strip().strip("\0")
 					return stripped_line, stripped_line.lower()
 
@@ -3184,14 +3196,14 @@ class MachineCom(object):
 		checksum = np.uint8([checksum])
 		return checksum
 
-	def _calc_buccaneer_checksum_get_high_product(a, b):
+	def _calc_buccaneer_checksum_get_high_product(self, a, b):
 		product = np.multiply(np.uint64(a),np.uint64(b))
 		#really a >> 32, but you can't use right_shift on uint64s
 		product = np.divide(product, 4294967296)
 		val = np.uint32(product)
 		return val
 
-	def _calc_buccaneer_checksum(command_to_send):
+	def _calc_buccaneer_checksum(self, command_to_send):
 		magic1 = np.uint32(0xD517BC79)
 		magic2 = np.uint32(0x97B425F)
 		magic3 = np.uint32(0xD8)
@@ -3201,58 +3213,57 @@ class MachineCom(object):
 		trimmed = np.uint16(0);
 		csumbyte = np.uint8(0);
 		presum = np.uint32(0);
-
 		for c in bytearray(command_to_send):
 			temp = np.uint32( np.subtract( np.left_shift(presum,5) , presum) )
 			extended  = np.uint32(c)
 			temp = np.add(temp, extended)
 			presum = temp
-
-		rotated1 = np.right_shift( _calc_buccaneer_checksum_get_high_product( magic1, presum), 23)
+		rotated1 = np.right_shift( self._calc_buccaneer_checksum_get_high_product( magic1, presum), 23)
 		rotated2 = np.right_shift( rotated1, 3)
-		mult1 = np.multiply( magic3 , _calc_buccaneer_checksum_get_high_product(magic2, rotated2))
+		mult1 = np.multiply( magic3 , self._calc_buccaneer_checksum_get_high_product(magic2, rotated2))
 		trimmed = np.uint16(np.subtract( rotated1, mult1 ))
 		trimmed = np.add(trimmed, np.uint16(0x21))
 		cs1 = np.uint8(trimmed)
-
-		rotated1 = np.right_shift( _calc_buccaneer_checksum_get_high_product( magic4, presum), 14)
+		rotated1 = np.right_shift( self._calc_buccaneer_checksum_get_high_product( magic4, presum), 14)
 		rotated2 = np.right_shift( rotated1, 3)
-		mult1 = np.multiply( magic3 , _calc_buccaneer_checksum_get_high_product(magic2, rotated2))
+		mult1 = np.multiply( magic3 , self._calc_buccaneer_checksum_get_high_product(magic2, rotated2))
 		trimmed = np.uint16(np.subtract( rotated1, mult1 ))
 		trimmed = np.add(trimmed, np.uint16(0x21))
 		cs2 = np.uint8(trimmed)
-
 		shiftedpresum = np.right_shift(presum, 3);
-		rotated1 = _calc_buccaneer_checksum_get_high_product( magic2, shiftedpresum)
+		rotated1 = self._calc_buccaneer_checksum_get_high_product( magic2, shiftedpresum)
 		rotated2 = np.right_shift( rotated1, 3)
-		mult1 = np.multiply( magic3 , _calc_buccaneer_checksum_get_high_product(magic2, rotated2))
+		mult1 = np.multiply( magic3 , self._calc_buccaneer_checksum_get_high_product(magic2, rotated2))
 		trimmed = np.uint16(np.subtract( rotated1, mult1 ))
 		trimmed = np.add(trimmed, np.uint16(0x21))
 		cs3 = np.uint8(trimmed)
-
-		mult1 = np.multiply( magic3 , _calc_buccaneer_checksum_get_high_product(magic2, shiftedpresum))
+		mult1 = np.multiply( magic3 , self._calc_buccaneer_checksum_get_high_product(magic2, shiftedpresum))
 		trimmed = np.uint16(np.subtract( presum, mult1 ))
 		trimmed = np.add(trimmed, np.uint16(0x21))
 		cs4 = np.uint8(trimmed)
-
 		checksum = np.uint8([cs1,cs2,cs3,cs4])
-
 		return checksum
 
 	def _do_send_with_checksum(self, command, linenumber):
+		self._log("Adding checksum for {}".format(command))	
 		command_to_send = "N" + str(linenumber) + " " + command
-
 		checksum = np.uint8([])
 		if self._is_buccaneer:
-			checksum = _calc_buccaneer_checksum(command_to_send)
+			checksum = self._calc_buccaneer_checksum(command_to_send)
 		else:
-			checksum = _calc_checksum(command_to_send)
-
+			checksum = self._calc_checksum(command_to_send)
 		command_to_send = command_to_send + "*"
 		for c in checksum:
-			command_to_send = command_to_send + "*" + chr(c)
-
+			command_to_send = command_to_send + chr(c)
 		self._do_send_without_checksum(command_to_send)
+
+	def _dump_csum_command(self, cmd):
+		parts = cmd.split('*')
+		logcmd = ">SendCS: "
+		logcmd += parts[0]
+		logcmd += '*'
+		logcmd += ' '.join(('%02x' % ord(c) for c in parts[1]))
+		self._log(logcmd)
 
 	def _do_send_without_checksum(self, cmd, log=True):
 
@@ -3260,7 +3271,22 @@ class MachineCom(object):
 			return
 
 		if log:
-			self._log("Send: " + str(cmd))
+			if '*' in cmd:
+				self._dump_csum_command(cmd)
+			else:
+				if self._is_buccaneer:
+					if cmd == "N0 M110":
+						self._log("Fixing Buccaneer Hello")
+						cmd += "*"
+						cmd += chr(0xDE)
+						cmd += chr(0xBB)
+						cmd += chr(0xC4)
+						cmd += chr(0x7A)
+						self._dump_csum_command(cmd)
+					else:
+						self.log("WARN: octoprint tried to send "+str(cmd)+" to buccaneer with no csum")
+				else:
+					self._log(">Send: " + str(cmd))
 
 		cmd += "\n"
 		written = 0
