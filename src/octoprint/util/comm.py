@@ -426,9 +426,11 @@ class MachineCom(object):
 		if self._is_buccaneer:
 			self._hello_command = "N0 M110"
 			self._alwaysSendChecksum = True
+			self._neverSendChecksum = False
+			self._sendChecksumWithUnknownCommands = False
 			self._port = "/dev/ttyS1"
 			self._baudrate = 38400
-		else
+		else:
 			self._hello_command = settings().get(["serial", "helloCommand"])
 			self._alwaysSendChecksum = settings().getBoolean(["serial", "alwaysSendChecksum"])
 			self._neverSendChecksum = settings().getBoolean(["serial", "neverSendChecksum"])
@@ -1422,7 +1424,7 @@ class MachineCom(object):
 			self.sendCommand("N{} M110".format(number),
 		                 part_of_job=part_of_job,
 		                 tags=tags | {"trigger:comm.reset_line_numbers",})
-		else
+		else:
 			self.sendCommand("M110 N{}".format(number),
 		                 part_of_job=part_of_job,
 		                 tags=tags | {"trigger:comm.reset_line_numbers",})
@@ -3243,7 +3245,7 @@ class MachineCom(object):
 		checksum = np.uint8([])
 		if self._is_buccaneer:
 			checksum = _calc_buccaneer_checksum(command_to_send)
-		else
+		else:
 			checksum = _calc_checksum(command_to_send)
 
 		command_to_send = command_to_send + "*"
