@@ -425,7 +425,7 @@ class MachineCom(object):
 
 		self._is_buccaneer = settings().get(["serial", "isBuccaneer"])
 		if self._is_buccaneer:
-			self._hello_command = "N0 M110" #+chr(0xde)+chr(0xbb)+chr(0xc4)+chr(0x7a)
+			self._hello_command = "N0 M110"
 			self._alwaysSendChecksum = True
 			self._neverSendChecksum = False
 			self._sendChecksumWithUnknownCommands = False
@@ -1612,12 +1612,9 @@ class MachineCom(object):
 
 					#convert buccaneer responses into gcode
 					if self._is_buccaneer:
-						linelower = line.lower();
-						if linelower.startswith("ok") or linelower.startswith("temp") or linelower.startswith("percent") or linelower.startswith("done"):
-							line = line.split('*')[0]
-							parts = line.split(':')
-							line = parts[0].lower() + ' ' + parts[1]
-							self._log("Buccaneer processed response message into : {}".format(line))
+						if line.startswith("OK:"):
+								line = "ok"
+						#self._log("Buccaneer processed response message into : {}".format(line))
 						#if it's not one of the above, just let it pass thru.. and hope we can figure this out later ;p
 						
 					stripped_line = line.strip().strip("\0")
@@ -2617,6 +2614,8 @@ class MachineCom(object):
 			return None
 
 		if ret != "":
+			if self._is_buccaneer:
+				ret = ret.split("*")[0]
 			try:
 				self._log("Recv: " + sanitize_ascii(ret))
 			except ValueError as e:
@@ -3245,7 +3244,6 @@ class MachineCom(object):
 		return checksum
 
 	def _do_send_with_checksum(self, command, linenumber):
-		self._log("Adding checksum for {}".format(command))	
 		command_to_send = "N" + str(linenumber) + " " + command
 		checksum = np.uint8([])
 		if self._is_buccaneer:
